@@ -26,7 +26,7 @@ from telegram.ext import (
 # =========================================================
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")
+PUBLIC_URL = os.getenv("PUBLIC_URL", "").rstrip("/")   # <--- أصبح اختيارياً
 WEBHOOK_PATH = os.environ.get("WEBHOOK_PATH", "/telegram/webhook")
 PORT = int(os.environ.get("PORT", "10000"))
 
@@ -953,16 +953,20 @@ async def handle_video(
 
 
 # =========================================================
-# FastAPI + Telegram Webhook
+# FastAPI + Telegram Webhook / Polling
 # =========================================================
 
 app = FastAPI()
 
 telegram_app = None
 
+# --- نقطة فحص الصحة (Health Check) ---
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "service": "telegram-face-swap-bot"}
+
 
 async def run_bot():
-
     application = (
         Application
         .builder()
@@ -1016,55 +1020,49 @@ async def run_bot():
 
     await application.start()
 
-    webhook_url = (
-        f"{PUBLIC_URL}"
-        f"{WEBHOOK_PATH}"
-    )
-
-    await application.bot.set_webhook(
-        url=webhook_url,
-        drop_pending_updates=True,
-        allowed_updates=Update.ALL_TYPES,
-    )
-
-    log.info(
-        "Webhook set to %s",
-        webhook_url,
-    )
+    # إذا كان PUBLIC_URL موجوداً، استخدم Webhook، وإلا استخدم Polling
+    if PUBLIC_URL:
+        webhook_url = f"{PUBLIC_URL}{WEBHOOK_PATH}"
+        await application.bot.set_webhook(
+            url=webhook_url,
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES,
+        )
+        log.info("Webhook set to %s", webhook_url)
+    else:
+        log.warning("PUBLIC_URL غير مضبوط. سيتم استخدام Polling بدلاً من Webhook.")
+        # ابدأ polling في الخلفية حتى لا يحجب تشغيل FastAPI
+        asyncio.create_task(application.run_polling())
+        log.info("Polling started successfully.")
 
     return application
 
 
 @app.on_event("startup")
 async def startup():
-
     global telegram_app
-
-    telegram_app = await run_bot()
+    try:
+        telegram_app = await run_bot()
+    except Exception as e:
+        log.critical("فشل بدء تشغيل البوت: %s", e, exc_info=True)
+        telegram_app = None
 
 
 @app.on_event("shutdown")
 async def shutdown():
-
     global telegram_app
-
     if telegram_app:
-
         try:
-            await telegram_app.bot.delete_webhook(
-                drop_pending_updates=False
-            )
+            if PUBLIC_URL:
+                await telegram_app.bot.delete_webhook(drop_pending_updates=False)
         except Exception:
             pass
-
         await telegram_app.stop()
-
         await telegram_app.shutdown()
 
 
 @app.get("/")
 async def root():
-
     return {
         "ok": True,
         "service": "telegram-face-swap-bot",
@@ -1075,9 +1073,7 @@ async def root():
 async def telegram_webhook(
     request: Request,
 ):
-
     if telegram_app is None:
-
         return JSONResponse(
             {
                 "ok": False,
@@ -1087,16 +1083,9 @@ async def telegram_webhook(
         )
 
     data = await request.json()
-
     update = Update.de_json(
         data,
         telegram_app.bot,
     )
-
-    await telegram_app.update_queue.put(
-        update
-    )
-
-    return {
-        "ok": True
-    }
+    await telegram_app.update_queue.put(update)
+    return {"ok": True}
