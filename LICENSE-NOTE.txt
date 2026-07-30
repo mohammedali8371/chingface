@@ -1,0 +1,2 @@
+InsightFace code/model usage is subject to the licenses and terms of the specific models you use.
+Check the model license before distributing or offering the bot as a service.
