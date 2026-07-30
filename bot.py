@@ -25,8 +25,9 @@ from telegram.ext import (
 # الإعدادات
 # =========================================================
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-PUBLIC_URL = os.getenv("PUBLIC_URL", "").rstrip("/")   # <--- أصبح اختيارياً
+# اجعل BOT_TOKEN و PUBLIC_URL اختياريين
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+PUBLIC_URL = os.getenv("PUBLIC_URL", "").rstrip("/")
 WEBHOOK_PATH = os.environ.get("WEBHOOK_PATH", "/telegram/webhook")
 PORT = int(os.environ.get("PORT", "10000"))
 
@@ -967,6 +968,11 @@ async def health_check():
 
 
 async def run_bot():
+    # التحقق من وجود التوكن
+    if not BOT_TOKEN:
+        log.error("❌ BOT_TOKEN غير مضبوط في البيئة. لن يعمل البوت.")
+        return None
+
     application = (
         Application
         .builder()
@@ -1043,8 +1049,10 @@ async def startup():
     global telegram_app
     try:
         telegram_app = await run_bot()
+        if telegram_app is None:
+            log.error("⚠️ فشل بدء البوت (راجع رسائل الخطأ أعلاه). الخادم سيستمر في العمل لكن البوت لن يعمل.")
     except Exception as e:
-        log.critical("فشل بدء تشغيل البوت: %s", e, exc_info=True)
+        log.critical("❌ خطأ غير متوقع أثناء بدء البوت: %s", e, exc_info=True)
         telegram_app = None
 
 
